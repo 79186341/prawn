@@ -276,11 +276,11 @@ fn fmt_obs(o: &Observation, tz: &Tz) -> String {
     if o.kind == ObsKind::Special {
         parts.push("SPECI".to_owned());
     }
-    if let Some(t) = o.air_temp_c {
-        parts.push(format!("T {t:.1}°C"));
+    if let (Some(c), Some(f)) = (o.air_temp_c, o.air_temp_f) {
+        parts.push(format!("T {c:.1}°C/{f:.1}°F"));
     }
-    if let Some(td) = o.dew_point_c {
-        parts.push(format!("Td {td:.1}°C"));
+    if let (Some(c), Some(f)) = (o.dew_point_c, o.dew_point_f) {
+        parts.push(format!("Td {c:.1}°C/{f:.1}°F"));
     }
     if let Some(rh) = o.relative_humidity_pct {
         parts.push(format!("RH {rh:.0}%"));

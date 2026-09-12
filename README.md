@@ -66,7 +66,9 @@ minute alignment in the cadence line is zone-independent. `--json` keeps all
 timestamps in UTC and emits one event per line:
 `station`, `history`, `cadence`, `waiting`, `observation`, `corrected`,
 `missed`, `error`. Observations are metric throughout: degrees Celsius, metres per
-second, kilometres, hectopascals, millimetres, metres.
+second, kilometres, hectopascals, millimetres, metres. Air temperature and dew
+point are also given in Fahrenheit (`T 20.0°C/68.0°F` in the log, `air_temp_f`
+and `dew_point_f` in JSON).
 
 ```
 15:37:34Z RJTT   cadence every 30 min, aligned to :00 (46 intervals, 100% agree); reports appear no earlier than 329s after the obs time (median 477s)
@@ -75,7 +77,8 @@ second, kilometres, hectopascals, millimetres, metres.
 15:38:57Z RJTT   next row expected 16:00Z, polling from 16:04:29Z
 ```
 
-Those are real lines from the first live run, captured with `--tz UTC`. AWC stamped that 15:30Z report as
+Those are real lines from the first live run, captured with `--tz UTC` and before
+the Fahrenheit column was added. AWC stamped that 15:30Z report as
 received at 15:38:07Z; polls at 15:38:14Z and 15:38:34Z still did not return it,
 and the one at 15:38:54Z did. So the API seems to refresh about once a minute
 after receipt, and the feed adds at most one poll interval on top of that.

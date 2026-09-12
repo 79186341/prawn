@@ -139,8 +139,8 @@ impl AwcMetar {
             Some("SPECI") => ObsKind::Special,
             _ => ObsKind::Unknown,
         };
-        obs.air_temp_c = self.temp;
-        obs.dew_point_c = self.dewp;
+        obs.set_air_temp_c(self.temp);
+        obs.set_dew_point_c(self.dewp);
         obs.relative_humidity_pct = match (self.temp, self.dewp) {
             (Some(t), Some(td)) => Some(round_to(relative_humidity(t, td), 0)),
             _ => None,
@@ -221,7 +221,9 @@ mod tests {
         assert_eq!(o.received.unwrap().timestamp(), 1_789_225_657);
         assert_eq!(o.kind, ObsKind::Routine);
         assert_eq!(o.air_temp_c, Some(20.0));
+        assert_eq!(o.air_temp_f, Some(68.0));
         assert_eq!(o.dew_point_c, Some(20.0));
+        assert_eq!(o.dew_point_f, Some(68.0));
         assert_eq!(o.relative_humidity_pct, Some(100.0));
         assert_eq!(o.wind_direction_deg, Some(30));
         assert!(!o.wind_variable);

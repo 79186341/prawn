@@ -183,8 +183,8 @@ pub fn parse_body(station: &str, body: &str) -> Result<Batch> {
             Some(raw) if raw.starts_with("METAR") => ObsKind::Routine,
             _ => ObsKind::Unknown,
         };
-        o.air_temp_c = cell_num(air_temp, i).map(|v| round_to(temp_to_c(v, &temp_unit), 1));
-        o.dew_point_c = cell_num(dew_point, i).map(|v| round_to(temp_to_c(v, &dew_unit), 1));
+        o.set_air_temp_c(cell_num(air_temp, i).map(|v| round_to(temp_to_c(v, &temp_unit), 1)));
+        o.set_dew_point_c(cell_num(dew_point, i).map(|v| round_to(temp_to_c(v, &dew_unit), 1)));
         o.relative_humidity_pct = cell_num(humidity, i)
             .map(|v| round_to(v, 0))
             .or_else(|| match (o.air_temp_c, o.dew_point_c) {
@@ -340,6 +340,7 @@ mod tests {
         );
         assert_eq!(first.kind, ObsKind::Routine);
         assert_eq!(first.air_temp_c, Some(20.0));
+        assert_eq!(first.air_temp_f, Some(68.0));
         assert_eq!(first.relative_humidity_pct, Some(100.0));
         assert_eq!(first.wind_speed_ms, Some(2.6));
         assert_eq!(first.wind_direction_deg, Some(30));

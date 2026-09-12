@@ -2,7 +2,8 @@
 //!
 //! Every backend converts its native payload into [`Observation`], which is
 //! always metric: degrees Celsius, metres per second, kilometres, hectopascals,
-//! millimetres, centimetres and metres.
+//! millimetres, centimetres and metres. The two temperatures also carry a
+//! Fahrenheit copy, filled in by the setters, so both scales can be shown.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -49,7 +50,9 @@ pub struct Observation {
     pub received: Option<DateTime<Utc>>,
     pub kind: ObsKind,
     pub air_temp_c: Option<f64>,
+    pub air_temp_f: Option<f64>,
     pub dew_point_c: Option<f64>,
+    pub dew_point_f: Option<f64>,
     pub relative_humidity_pct: Option<f64>,
     pub wind_direction_deg: Option<u16>,
     pub wind_variable: bool,
@@ -77,7 +80,9 @@ impl Observation {
             received: None,
             kind: ObsKind::Unknown,
             air_temp_c: None,
+            air_temp_f: None,
             dew_point_c: None,
+            dew_point_f: None,
             relative_humidity_pct: None,
             wind_direction_deg: None,
             wind_variable: false,
@@ -95,6 +100,18 @@ impl Observation {
             snow_depth_cm: None,
             raw: None,
         }
+    }
+
+    /// Sets the air temperature in both scales from a Celsius value.
+    pub fn set_air_temp_c(&mut self, c: Option<f64>) {
+        self.air_temp_c = c;
+        self.air_temp_f = c.map(|c| round_to(c_to_f(c), 1));
+    }
+
+    /// Sets the dew point in both scales from a Celsius value.
+    pub fn set_dew_point_c(&mut self, c: Option<f64>) {
+        self.dew_point_c = c;
+        self.dew_point_f = c.map(|c| round_to(c_to_f(c), 1));
     }
 
     /// Stable identity of the row's content, used to notice a correction
@@ -120,6 +137,10 @@ pub fn relative_humidity(t_c: f64, td_c: f64) -> f64 {
     (100.0 * e(td_c) / e(t_c)).clamp(0.0, 100.0)
 }
 
+pub fn c_to_f(c: f64) -> f64 {
+    c * 9.0 / 5.0 + 32.0
+}
+
 pub fn round_to(x: f64, places: i32) -> f64 {
     let f = 10f64.powi(places);
     (x * f).round() / f
@@ -128,6 +149,18 @@ pub fn round_to(x: f64, places: i32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fahrenheit_copies_follow_celsius() {
+        assert_eq!(c_to_f(-40.0), -40.0);
+        let mut o = Observation::new("X", Utc::now());
+        o.set_air_temp_c(Some(20.0));
+        o.set_dew_point_c(Some(23.3));
+        assert_eq!(o.air_temp_f, Some(68.0));
+        assert_eq!(o.dew_point_f, Some(73.9));
+        o.set_air_temp_c(None);
+        assert_eq!(o.air_temp_f, None);
+    }
 
     #[test]
     fn humidity_saturates_at_dew_point() {
