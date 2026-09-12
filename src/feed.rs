@@ -70,6 +70,8 @@ pub enum Event {
         station: String,
         expected: DateTime<Utc>,
         poll_from: DateTime<Utc>,
+        /// Poll interval used once `poll_from` is reached.
+        poll_every_s: u64,
     },
     #[serde(rename = "observation")]
     New {
@@ -191,7 +193,7 @@ impl Feed {
         if let Some(info) = info {
             self.emit(Event::Station {
                 station: self.st(),
-                source: self.source.name(),
+                source: self.source.name_for(&self.station),
                 info,
             })
             .await;
@@ -252,15 +254,23 @@ impl Feed {
         }
     }
 
+    /// Configured interval, raised to whatever the backend can usefully serve.
+    fn poll_interval(&self, configured: Duration) -> Duration {
+        configured.max(self.source.min_poll_interval(&self.station))
+    }
+
     async fn run_scheduled(&mut self, cadence: Cadence) {
+        let fast = self.poll_interval(self.cfg.poll_interval);
+        let slow = self.poll_interval(self.cfg.slow_interval);
         loop {
             let now = Utc::now();
-            // Never chase a slot older than one period; a later poll still
-            // reports anything that turns up late.
-            let floor = sub(now, cadence.period);
+            let start_offset = self.lag.start_offset(self.cfg.lag_margin);
+            // Never chase a slot older than one period plus the usual publish
+            // lag (rows can lag by several periods on slow feeds); a later poll
+            // still reports anything that turns up after that.
+            let floor = sub(now, cadence.period + start_offset);
             let anchor = self.last_time.map_or(floor, |t| t.max(floor));
             let expected = cadence.next_after(anchor);
-            let start_offset = self.lag.start_offset(self.cfg.lag_margin);
             let poll_from = add(expected, start_offset);
             let fast_until = add(
                 expected,
@@ -272,6 +282,7 @@ impl Feed {
                 station: self.st(),
                 expected,
                 poll_from,
+                poll_every_s: fast.as_secs(),
             })
             .await;
 
@@ -317,8 +328,8 @@ impl Feed {
                         let remaining = until(poll_from, now);
                         self.cfg.idle_poll.map_or(remaining, |d| d.min(remaining))
                     }
-                    Phase::Fast => self.cfg.poll_interval,
-                    Phase::Slow => self.cfg.slow_interval,
+                    Phase::Fast => fast,
+                    Phase::Slow => slow,
                 };
                 let wait = backoff(base, errors).min(until(deadline, now));
                 debug!(station = %self.station, ?phase, ?wait, "sleeping");
@@ -328,6 +339,7 @@ impl Feed {
     }
 
     async fn run_unscheduled(&mut self) {
+        let interval = self.poll_interval(self.cfg.slow_interval);
         let mut errors: u32 = 0;
         loop {
             match self.source.fetch(&self.station, self.poll_window).await {
@@ -344,7 +356,7 @@ impl Feed {
                     .await;
                 }
             }
-            tokio::time::sleep(backoff(self.cfg.slow_interval, errors)).await;
+            tokio::time::sleep(backoff(interval, errors)).await;
         }
     }
 

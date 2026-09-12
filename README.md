@@ -5,6 +5,7 @@ reporting cadence. Prototype.
 
 ```
 cargo run -- RJTT            # Tokyo Haneda, reports every 30 min
+cargo run -- KMIA            # Miami, 5-minute ASOS rows via the NWS API
 cargo run -- RJTT KSLC KJFK  # several stations, one task each
 cargo run -- --json RJTT     # one JSON object per line, pipe-friendly
 cargo run -- --once RJTT     # print the last 24 h and exit
@@ -21,16 +22,20 @@ report is due.
 
 That token is locked to weather.gov (`Invalid request per token rules` from
 anywhere else), and Synoptic's free "Open Access" tier is now limited to US academic
-accounts. So the default backend here is the Aviation Weather Center data API
-(`aviationweather.gov/api/data/metar`), which is token-free, covers airport
-stations worldwide, and returns the same METAR reports the weather.gov page shows
-for RJTT. A Synoptic backend is included for anyone with their own token; it also
-covers non-airport networks (RAWS, mesonets) that report every 5 or 10 minutes.
+accounts. So this tool uses token-free government APIs and picks per station:
 
 | Backend | Flag | Token | Coverage | Verified live |
 |---|---|---|---|---|
-| Aviation Weather Center | default | none | ICAO airport stations, global | yes |
+| NWS API (`api.weather.gov`) | `--source nws` | none | US stations; includes the 5-minute ASOS rows | yes (KMIA) |
+| Aviation Weather Center | `--source awc` | none | ICAO airport stations worldwide; hourly METAR + SPECI only | yes (RJTT, KSLC) |
+| automatic (default) | `--source auto` | none | NWS when it knows the station, AWC otherwise | yes |
 | Synoptic Data | `--source synoptic` | `SYNOPTIC_TOKEN` | every network on the weather.gov page | parser only (fixture) |
+
+For a US ASOS airport such as KMIA the weather.gov page shows a row every 5
+minutes plus the hourly report at :53 and any SPECI. Those 5-minute rows come
+from the ASOS high-frequency feed, which AWC does not carry; the NWS API does,
+so `auto` sends US stations there. Non-US stations (RJTT) are not in the NWS
+API at all and go to AWC.
 
 ## Polling strategy
 
@@ -55,7 +60,31 @@ covers non-airport networks (RAWS, mesonets) that report every 5 or 10 minutes.
 
 Request budget: roughly 6 to 20 requests per station per report, well inside
 AWC's 100 requests per minute. A cache in front of AWC reports `max-age=60` but
-does not actually cache these responses, so every poll is fresh.
+does not actually cache these responses, so every poll is fresh. The NWS API is
+different: its observation lists are cached upstream for about two minutes, so
+the NWS backend truncates its `start` parameter to the minute and never polls
+faster than once a minute, whatever `--poll-interval` says. The log's
+"polling every Ns" line shows the interval actually in use.
+
+## How late is the data at the source?
+
+Measured on 2026-09-12 by polling each source every 30 s and noting when a row
+first appeared (the `receiptTime` on AWC rows gives the same thing directly):
+
+| Rows | Source | Appears after the observation time |
+|---|---|---|
+| RJTT half-hourly METAR | AWC | 5.5 to 10.5 min |
+| KSLC, KMIA hourly METAR at :53/:54 | AWC | 3 to 4 min |
+| KMIA SPECI | AWC | about 5 min |
+| KMIA 5-minute ASOS rows | NWS API | 13 to 20 min, arriving in batches every 5 to 10 min |
+| KMIA 5-minute ASOS rows | Iowa Environmental Mesonet | similar; nothing newer than the NWS API |
+
+The weather.gov page itself (Synoptic) showed the same picture in a screenshot
+taken at 14:04 EDT: the 13:53 row was there, the 13:55 and 14:00 rows were not.
+So the 5-minute rows are late at the source, not at the consumer; nobody can
+show them sooner than the ASOS distribution does. The feed handles this by
+learning the lag from the first live rows and anchoring its expectations that
+far back, so each 5-minute row is still matched to its slot when it arrives.
 
 ## Output
 
@@ -95,6 +124,7 @@ after receipt, and the feed adds at most one poll interval on top of that.
 --idle-poll <dur>     optional background poll between slots (catches SPECIs sooner)
 --user-agent <ua>     identify yourself to the upstream API
 --tz America/New_York time zone for displayed times (IANA name); JSON stays UTC
+--source auto         auto | awc | nws | synoptic
 RUST_LOG=debug        show every request on stderr
 ```
 
@@ -103,6 +133,7 @@ RUST_LOG=debug        show every request on stderr
 - `src/model.rs` metric observation model and unit constants
 - `src/schedule.rs` cadence inference, next-slot prediction, lag model
 - `src/source/awc.rs` Aviation Weather Center backend
+- `src/source/nws.rs` NWS API backend (5-minute ASOS rows)
 - `src/source/synoptic.rs` Synoptic Data backend
 - `src/feed.rs` per-station polling loop and event stream
 - `src/main.rs` CLI and output formatting

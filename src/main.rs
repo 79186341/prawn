@@ -21,7 +21,7 @@ use tracing_subscriber::EnvFilter;
 
 use feed::{Event, Feed, FeedConfig};
 use model::{ObsKind, Observation, StationInfo};
-use source::{AnySource, awc::AwcSource, synoptic::SynopticSource};
+use source::{AnySource, awc::AwcSource, nws::NwsSource, synoptic::SynopticSource};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -35,7 +35,7 @@ struct Cli {
     stations: Vec<String>,
 
     /// Upstream data provider
-    #[arg(long, value_enum, default_value_t = SourceKind::Awc)]
+    #[arg(long, value_enum, default_value_t = SourceKind::Auto)]
     source: SourceKind,
 
     /// Synoptic API token (only with --source synoptic)
@@ -95,9 +95,13 @@ fn parse_tz(s: &str) -> Result<Tz, String> {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum SourceKind {
-    /// aviationweather.gov METAR API: no token, global airport stations
+    /// nws for stations the NWS API knows (US, 5-minute ASOS rows), awc otherwise
+    Auto,
+    /// aviationweather.gov METAR API: no token, global airport stations, hourly + SPECI only
     Awc,
-    /// api.synopticdata.com timeseries: token required, all networks
+    /// api.weather.gov observations: no token, US stations, includes 5-minute ASOS rows
+    Nws,
+    /// api.synopticdata.com timeseries: token required, every network on the weather.gov page
     Synoptic,
 }
 
@@ -129,7 +133,9 @@ async fn main() -> Result<()> {
 
     let client = source::http_client(cli.user_agent.as_deref())?;
     let source = Arc::new(match cli.source {
+        SourceKind::Auto => AnySource::auto(client),
         SourceKind::Awc => AnySource::Awc(AwcSource::new(client)),
+        SourceKind::Nws => AnySource::Nws(NwsSource::new(client)),
         SourceKind::Synoptic => {
             let token = cli
                 .token
@@ -210,21 +216,28 @@ fn print_event(event: &Event, json: bool, tz: &Tz) {
             lag_min_s,
             lag_median_s,
             ..
-        } => format!(
-            "cadence {description} ({samples} intervals, {:.0}% agree); reports appear {} after the obs time (median {})",
-            agreement * 100.0,
-            fmt_lag(*lag_min_s, "no earlier than "),
-            fmt_lag(*lag_median_s, ""),
-        ),
+        } => match lag_min_s {
+            Some(_) => format!(
+                "cadence {description} ({samples} intervals, {:.0}% agree); reports appear {} after the obs time (median {})",
+                agreement * 100.0,
+                fmt_lag(*lag_min_s, "no earlier than "),
+                fmt_lag(*lag_median_s, ""),
+            ),
+            None => format!(
+                "cadence {description} ({samples} intervals, {:.0}% agree); publish lag unknown until the first live row, so polling starts at the due time",
+                agreement * 100.0,
+            ),
+        },
         Event::NoCadence { rows, .. } => {
             format!("no regular cadence in {rows} rows; polling at the slow interval")
         }
         Event::Waiting {
             expected,
             poll_from,
+            poll_every_s,
             ..
         } => format!(
-            "next row expected {}, polling from {}",
+            "next row expected {}, polling every {poll_every_s}s from {}",
             fmt_time(*expected, tz, "%H:%M %Z"),
             fmt_time(*poll_from, tz, "%H:%M:%S %Z")
         ),
