@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use serde::Serialize;
 use tokio::sync::mpsc;
 use tracing::debug;
@@ -271,23 +271,31 @@ impl Feed {
             let floor = sub(now, cadence.period + start_offset);
             let anchor = self.last_time.map_or(floor, |t| t.max(floor));
             let expected = cadence.next_after(anchor);
-            let poll_from = add(expected, start_offset);
-            let fast_until = add(
-                expected,
-                self.lag
-                    .fast_window(self.cfg.lag_margin, self.cfg.fast_window),
-            );
-            let deadline = add(cadence.next_after(expected), start_offset);
-            self.emit(Event::Waiting {
-                station: self.st(),
-                expected,
-                poll_from,
-                poll_every_s: fast.as_secs(),
-            })
-            .await;
-
+            let mut announced: Option<DateTime<Utc>> = None;
             let mut errors: u32 = 0;
             loop {
+                // Recomputed every pass so a lag learned mid-slot (the first
+                // live rows on a feed without receipt stamps) takes effect now.
+                let start_offset = self.lag.start_offset(self.cfg.lag_margin);
+                let poll_from = add(expected, start_offset);
+                let fast_until = add(
+                    expected,
+                    self.lag
+                        .fast_window(self.cfg.lag_margin, self.cfg.fast_window),
+                );
+                let deadline = add(cadence.next_after(expected), start_offset);
+                let moved =
+                    announced.is_none_or(|p| (poll_from - p).abs() > TimeDelta::seconds(30));
+                if moved {
+                    announced = Some(poll_from);
+                    self.emit(Event::Waiting {
+                        station: self.st(),
+                        expected,
+                        poll_from,
+                        poll_every_s: fast.as_secs(),
+                    })
+                    .await;
+                }
                 let now = Utc::now();
                 let phase = if now < poll_from {
                     Phase::Idle
